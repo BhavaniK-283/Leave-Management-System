@@ -47,7 +47,7 @@ public class LeaveTransactionEntity {
     private UserEntity approver; // Manager who approves leave
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "applied_for", nullable = false)
+    @Column(name = "applied_from", nullable = false)
     private EnumLeaveDuration appliedFrom; // FIRST_HALF, SECOND_HALF, FULL_DAY
 
     @Enumerated(EnumType.STRING)

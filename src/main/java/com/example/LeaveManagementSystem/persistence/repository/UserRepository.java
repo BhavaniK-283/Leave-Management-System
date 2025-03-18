@@ -10,4 +10,6 @@ import java.util.Optional;
 @Repository
 public interface UserRepository extends JpaRepository<UserEntity,Long> {
     Optional<UserEntity> findByIdAndStatus(Long id, EnumStatus enumStatus);
+
+    Optional<UserEntity> findByIdAndStatusAndTenantId(Long aLong, EnumStatus enumStatus, long aLong1);
 }

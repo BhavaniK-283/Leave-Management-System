@@ -1,15 +1,26 @@
 package com.example.LeaveManagementSystem.persistence.service.serviceImpl;
 
+import com.example.LeaveManagementSystem.persistence.constants.ResponseConstant;
+import com.example.LeaveManagementSystem.persistence.dto.ApiResponseDto;
 import com.example.LeaveManagementSystem.persistence.dto.LeaveRequestDto;
 import com.example.LeaveManagementSystem.persistence.entity.*;
 import com.example.LeaveManagementSystem.persistence.enumeration.EnumLeaveStatus;
+import com.example.LeaveManagementSystem.persistence.enumeration.EnumRoleType;
 import com.example.LeaveManagementSystem.persistence.enumeration.EnumStatus;
+import com.example.LeaveManagementSystem.persistence.exception.UserNotFoundException;
+import com.example.LeaveManagementSystem.persistence.mapper.LeaveTransactionMapper;
 import com.example.LeaveManagementSystem.persistence.repository.*;
+import com.example.LeaveManagementSystem.persistence.service.EmailService;
 import com.example.LeaveManagementSystem.persistence.service.LeaveTransactionService;
+import com.example.LeaveManagementSystem.persistence.validation.LeaveTransactionValidation;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 
 @Service
@@ -21,85 +32,100 @@ public class LeaveTransactionServiceImpl implements LeaveTransactionService {
     private final LeaveTypeRepository leaveTypeRepository;
     private final TenantRepository tenantRepository;
     private final ApproveWorkflowRepository approveWorkflowRepository;
+    private final LeaveTransactionMapper leaveTransactionMapper;
+    private final LeaveTransactionValidation leaveTransactionValidation;
+    private final EmailService emailService;
 
     @Override
-    @Transactional
-    public String leaveRequest(LeaveRequestDto leaveRequestDto, String tenantId, String userId) {
-
-        /* body
-        leaveRequestDto.userId bhavani
-        header userId syed
-         */
-
-        // Validate user existence using Optional
-        TenantEntity tenantEntity = tenantRepository.findByIdAndStatus(Long.valueOf(tenantId),EnumStatus.ACTIVE).orElseThrow(
-        ()-> new RuntimeException("Tenant not found"));
-
-        // Validate user existence using Optional
-        UserEntity requestUser = userRepository.findByIdAndStatus(Long.valueOf(userId),EnumStatus.ACTIVE).orElseThrow(
-                ()-> new RuntimeException("User not found"));
-
-        UserEntity userLeave = userRepository.findByIdAndStatus(Long.valueOf(leaveRequestDto.getUserId()),EnumStatus.ACTIVE).orElseThrow(
-                ()-> new RuntimeException("User not found"));
 
 
+    public ApiResponseDto leaveRequest(LeaveRequestDto leaveRequestDto, String tenantId, String userId) throws UserNotFoundException {
 
-        LeaveTypeEntity leaveTypeEntity = leaveTypeRepository.findById(Long.valueOf(leaveRequestDto.getLeaveTypeId())).orElseThrow(
-                ()-> new RuntimeException("Leave Type not found"));
+        // Validate Tenant
+        TenantEntity tenantEntity = leaveTransactionValidation.validateTenant(tenantId);
 
+        UserEntity requestUser = leaveTransactionValidation.validateUser(userId, tenantEntity.getId());
 
+        UserEntity userLeave = leaveTransactionValidation.validateUser(String.valueOf(leaveRequestDto.getUserId()), tenantEntity.getId());
 
-        LeaveTransactionEntity leaveTransaction = new LeaveTransactionEntity();
-        leaveTransaction.setUser(userLeave);
-        leaveTransaction.setTenant(tenantEntity);
-        leaveTransaction.setLeaveType(leaveTypeEntity);
-        leaveTransaction.setApprover(leaveTypeEntity.isReviewer()?userLeave.getReviewer():userLeave.getApprover());
-        leaveTransaction.setStartDate(leaveRequestDto.getStartDate());
-        leaveTransaction.setEndDate(leaveRequestDto.getEndDate());
-        leaveTransaction.setAppliedFrom(leaveRequestDto.getAppliedFrom());
-        leaveTransaction.setAppliedTo(leaveRequestDto.getAppliedTo());
-        leaveTransaction.setRemarks(leaveRequestDto.getRemarks());
-        leaveTransaction.setStatus(EnumStatus.ACTIVE);
-        leaveTransaction.setLeaveStatus(EnumLeaveStatus.PENDING);
-        leaveTransaction.setCreatedBy(requestUser.getName());
-        leaveTransaction.setUpdatedBy(requestUser.getName());
+        LeaveTypeEntity leaveTypeEntity = leaveTransactionValidation.validateLeaveType(String.valueOf(leaveRequestDto.getLeaveTypeId()));
 
+        leaveTransactionValidation.validateLeaveDates(leaveRequestDto.getStartDate(), leaveRequestDto.getEndDate());
+
+        leaveTransactionValidation.checkDuplicateLeaveRequest(userLeave, leaveRequestDto);
+
+        LeaveTransactionEntity leaveTransaction = leaveTransactionMapper.leaveRequestDtoToLeaveTransactionEntity(leaveRequestDto, tenantEntity, requestUser, userLeave, leaveTypeEntity);
         leaveTransactionRepository.save(leaveTransaction);
 
 
-        // Create approval workflow for the first approver
-        UserEntity approver = userLeave.getApprover();
-        if (approver != null) {
-            ApproveWorkflowEntity approverWorkflow = new ApproveWorkflowEntity();
-            approverWorkflow.setTenant(tenantEntity);
-            approverWorkflow.setLeaveTransaction(leaveTransaction);
-            approverWorkflow.setApprover(approver);
-            approverWorkflow.setWorkflowStatus(EnumLeaveStatus.PENDING);
-            approverWorkflow.setStatus(EnumStatus.ACTIVE);
-            approverWorkflow.setCreatedBy(requestUser.getName());
-            approverWorkflow.setUpdatedBy(requestUser.getName());
-            approveWorkflowRepository.save(approverWorkflow);
+        List<ApproveWorkflowEntity> approveWorkflowEntities = leaveTransactionMapper.leaveRequestDtoToApproveWorkflowEntities(leaveTransaction, tenantEntity, requestUser, userLeave);
+        approveWorkflowRepository.saveAll(approveWorkflowEntities);
+
+        //send mail
+        emailService.sendLeaveAppliedEmail(userLeave,String.valueOf(leaveRequestDto.getStartDate()), String.valueOf(leaveRequestDto.getEndDate()));
+
+        return new ApiResponseDto(HttpStatus.OK.value(), ResponseConstant.LEAVE_CREATED_MESSAGE);
+
+    }
+
+    @Override
+    @Transactional
+    public ApiResponseDto updateLeaveRequest(Long leaveId, LeaveRequestDto leaveRequestDto, String userId, String tenantId) {
+        LeaveTransactionEntity userLeave = leaveTransactionRepository.findById(leaveId)
+                .orElseThrow(() -> new RuntimeException("Leave request not found"));
+
+        // Ensure the leave request is still in pending state
+        if (!userLeave.getLeaveStatus().equals(EnumLeaveStatus.PENDING)) {
+            throw new RuntimeException("Only pending leave requests can be updated.");
         }
 
-        // If leave type requires a second-level reviewer, create another workflow
-        if (leaveTypeEntity.isReviewer() && userLeave.getReviewer() != null) {
-            UserEntity reviewer = userLeave.getReviewer();
-            ApproveWorkflowEntity reviewerWorkflow = new ApproveWorkflowEntity();
-            reviewerWorkflow.setTenant(tenantEntity);
-            reviewerWorkflow.setLeaveTransaction(leaveTransaction);
-            reviewerWorkflow.setApprover(reviewer);
-            reviewerWorkflow.setWorkflowStatus(EnumLeaveStatus.PENDING);
-            reviewerWorkflow.setStatus(EnumStatus.ACTIVE);
-            reviewerWorkflow.setCreatedBy(requestUser.getName());
-            reviewerWorkflow.setUpdatedBy(requestUser.getName());
-            approveWorkflowRepository.save(reviewerWorkflow);
-        }
 
-        return "Leave request submitted successfully";
+        TenantEntity tenantEntity = tenantRepository.findByIdAndStatus(Long.valueOf(tenantId), EnumStatus.ACTIVE).orElseThrow(
+                () -> new RuntimeException("Tenant not found"));
+
+        UserEntity requestUser = userRepository.findByIdAndStatusAndTenantId(
+                        Long.valueOf(userId), EnumStatus.ACTIVE, tenantEntity.getId())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+
+        LeaveTransactionEntity leaveTransactionUpdate = LeaveTransactionMapper.leaveUpadteDtoToLeaveTransactionEntity(leaveRequestDto, tenantEntity, requestUser, userLeave);
+//        ApproveWorkflowEntity approveWorkflowUpdate=LeaveTransactionMapper.leaveUpadteDtoToApproveWoekflowEntity(leaveRequestDto, tenantEntity, requestUser,userLeave);
+        leaveTransactionRepository.save(leaveTransactionUpdate);
+
+        //leaveTransactionRepository.save(leaveTransaction);
+
+        return new ApiResponseDto(HttpStatus.OK.value(), ResponseConstant.LEAVE_UPDATED_MESSAGE);
+    }
+
+    @Override
+    public List<LeaveRequestDto> getUserLeaveTransactions(Long requestedUserId, Long requesterId) {
+        // Fetch the requester details
+        UserEntity requester = userRepository.findByIdAndStatus(requesterId, EnumStatus.ACTIVE)
+                .orElseThrow(() -> new RuntimeException("Requester not found"));
+
+        // If requester is ADMIN, allow access to any user's leave transactions
+        if (requester.getRole().getName() == EnumRoleType.ADMIN) {
+            List<LeaveTransactionEntity> transactions = leaveTransactionRepository.findByUserIdAndStatus(requestedUserId, EnumStatus.ACTIVE);
+            return transactions.stream()
+                    .map(LeaveTransactionMapper::leaveTransactionEntityToDto)
+                    .collect(Collectors.toList());
+        } else if (requester.getRole().getName() == EnumRoleType.USER) { // If requester is a USER, allow only self-access
+            if (!requesterId.equals(requestedUserId)) {
+                throw new RuntimeException("Access denied! Users can only view their own leave transactions.");
+            }
+            List<LeaveTransactionEntity> transactions = leaveTransactionRepository.findByUserIdAndStatus(requesterId, EnumStatus.ACTIVE);
+            return transactions.stream()
+                    .map(LeaveTransactionMapper::leaveTransactionEntityToDto)
+                    .collect(Collectors.toList());
+        } else {
+
+            throw new RuntimeException("Unauthorized access.");
+        }
     }
 
 
-
-
-
 }
+
+
+
+
