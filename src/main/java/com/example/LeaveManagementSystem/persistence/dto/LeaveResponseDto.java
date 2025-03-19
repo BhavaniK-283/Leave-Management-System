@@ -20,23 +20,18 @@ public class LeaveResponseDto {
     private String tenantName;
     private String userName;
     private String leaveType;
+    private Long approverId;
     private String approverName;
     private String remarks;
-
     private EnumLeaveDuration appliedFrom;
     private EnumLeaveDuration appliedTo;
     private EnumLeaveDuration approvedFor;
-
     private EnumLeaveStatus leaveStatus;
-
     private LocalDate startDate;
     private LocalDate endDate;
-
     private EnumStatus status;
-
     private String createdBy;
     private String updatedBy;
-
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

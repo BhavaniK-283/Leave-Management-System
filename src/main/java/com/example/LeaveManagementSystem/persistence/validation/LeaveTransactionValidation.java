@@ -19,6 +19,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
 
@@ -39,7 +41,7 @@ public class LeaveTransactionValidation {
     }
     public UserEntity validateUser(String userId, Long tenantId) throws UserNotFoundException {
         return userRepository.findByIdAndStatusAndTenantId(Long.valueOf(userId), EnumStatus.ACTIVE, tenantId)
-                .orElseThrow(() -> new UserNotFoundException("User not found", HttpStatus.BAD_REQUEST.value()));
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
     }
     public LeaveTypeEntity validateLeaveType(String leaveTypeId) {
         return leaveTypeRepository.findById(Long.valueOf(leaveTypeId))
@@ -49,21 +51,21 @@ public class LeaveTransactionValidation {
         LocalDate today = LocalDate.now();
 
         if (startDate.isBefore(today)) {
-            throw new InvalidLeaveDateException("Leave start date cannot be in the past", HttpStatus.BAD_REQUEST.value());
+            throw new InvalidLeaveDateException("Leave start date cannot be in the past");
         }
 
         if (endDate.isBefore(startDate)) {
-            throw new InvalidLeaveDateException("End date cannot be before start date", HttpStatus.BAD_REQUEST.value());
+            throw new InvalidLeaveDateException("End date cannot be before start date");
         }
     }
 
 
-    public void checkDuplicateLeaveRequest(UserEntity user, LeaveRequestDto leaveRequestDto) throws DuplicateLeaveRequestException {
+    public void checkDuplicateLeaveRequest(UserEntity user, LeaveRequestDto leaveRequestDto, LocalDate startDate, LocalDate endDate) throws DuplicateLeaveRequestException {
 
         List<LeaveTransactionEntity> existingLeaves = leaveTransactionRepository.findByUserAndStartDateLessThanEqualAndEndDateGreaterThanEqualAndLeaveStatusIn(
                 user,
-                leaveRequestDto.getEndDate(),
-                leaveRequestDto.getStartDate(),
+               endDate,
+                startDate,
                 List.of(EnumLeaveStatus.PENDING, EnumLeaveStatus.APPROVED)
         );
 
@@ -71,27 +73,27 @@ public class LeaveTransactionValidation {
             boolean isOverlap = false;
 
             // Case 1: Full overlap (same start and end date, conflicting leave durations)
-            if (leaveRequestDto.getStartDate().equals(existingLeave.getStartDate()) &&
-                    leaveRequestDto.getEndDate().equals(existingLeave.getEndDate())) {
+            if (startDate.equals(existingLeave.getStartDate()) &&
+                    endDate.equals(existingLeave.getEndDate())) {
                 isOverlap = true;
             }
 
             // Case 2: Overlapping dates but **valid half-day transitions**
-            if (leaveRequestDto.getStartDate().equals(existingLeave.getEndDate()) &&
+            if (startDate.equals(existingLeave.getEndDate()) &&
                     leaveRequestDto.getAppliedFrom() == EnumLeaveDuration.FULL_DAY &&
                     existingLeave.getAppliedTo() == EnumLeaveDuration.FIRST_HALF) {
                 isOverlap = false; // Valid transition (New leave starts after the existing leave ends)
             }
             // Valid transition (Existing leave starts after new leave ends)
-            if (leaveRequestDto.getEndDate().equals(existingLeave.getStartDate()) &&
+            if (endDate.equals(existingLeave.getStartDate()) &&
                     leaveRequestDto.getAppliedTo() == EnumLeaveDuration.FULL_DAY &&
                     existingLeave.getAppliedFrom() == EnumLeaveDuration.SECOND_HALF) {
                 isOverlap = false;
             }
 
             // Prevent improper half-day overlaps**
-            if (leaveRequestDto.getStartDate().equals(existingLeave.getStartDate()) ||
-                    leaveRequestDto.getEndDate().equals(existingLeave.getEndDate())) {
+            if (startDate.equals(existingLeave.getStartDate()) ||
+                    endDate.equals(existingLeave.getEndDate())) {
 
                 if ((leaveRequestDto.getAppliedFrom() == EnumLeaveDuration.SECOND_HALF &&
                         existingLeave.getAppliedTo() == EnumLeaveDuration.FIRST_HALF) ||
@@ -106,6 +108,29 @@ public class LeaveTransactionValidation {
             if (isOverlap) {
                 throw new DuplicateLeaveRequestException("Leave Request overlaps with an existing leave.");
             }
+        }
+    }
+
+    public static LocalDate validateAndParseDate(String dateStr) {
+         DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        try {
+            // Parse date
+            LocalDate date = LocalDate.parse(dateStr, FORMATTER);
+
+            // Validate that year, month, and day are not zero
+            String[] parts = dateStr.split("-");
+            int year = Integer.parseInt(parts[0]);
+            int month = Integer.parseInt(parts[1]);
+            int day = Integer.parseInt(parts[2]);
+
+            if (year == 0 || month == 0 || day == 0) {
+                throw new DatePatternMismatchException("Invalid date: Year, Month, or Day cannot be zero.");
+            }
+
+            return date;
+
+        } catch (DateTimeParseException e) {
+            throw new DatePatternMismatchException("Invalid date format. Expected format: yyyy-MM-dd");
         }
     }
 

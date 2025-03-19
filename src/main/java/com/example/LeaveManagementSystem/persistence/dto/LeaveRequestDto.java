@@ -4,6 +4,7 @@ import com.example.LeaveManagementSystem.persistence.enumeration.EnumLeaveDurati
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import lombok.*;
 import java.time.LocalDate;
 @NoArgsConstructor
@@ -18,9 +19,9 @@ public class LeaveRequestDto {
     @NotNull(message = "Leave Type ID is required")
     private Integer leaveTypeId;
     @NotNull(message = "Start Date is required")
-    private LocalDate startDate;
+    private String startDate;
     @NotNull(message = "End Date is required")
-    private LocalDate endDate;
+    private String endDate;
     @NotNull(message = "Applied From is required")
     private EnumLeaveDuration appliedFrom;
     @NotNull(message = "Applied To is required")

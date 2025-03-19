@@ -18,4 +18,8 @@ public interface LeaveTransactionRepository extends JpaRepository<LeaveTransacti
     List<LeaveTransactionEntity> findByUserAndStartDateGreaterThanEqualAndEndDateLessThanEqualAndLeaveStatusIn(UserEntity user, @NotNull(message = "Start Date is required") LocalDate startDate, @NotNull(message = "End Date is required") LocalDate endDate, List<EnumLeaveStatus> pending);
 
     List<LeaveTransactionEntity> findByUserAndStartDateLessThanEqualAndEndDateGreaterThanEqualAndLeaveStatusIn(UserEntity user, @NotNull(message = "Start Date is required") LocalDate startDate, @NotNull(message = "End Date is required") LocalDate endDate, List<EnumLeaveStatus> pending);
+
+    List<LeaveTransactionEntity> findByTenantIdAndStatus(long id, EnumStatus enumStatus);
+
+    List<LeaveTransactionEntity> findByApproverIdAndStatus(long id, EnumStatus enumStatus);
 }

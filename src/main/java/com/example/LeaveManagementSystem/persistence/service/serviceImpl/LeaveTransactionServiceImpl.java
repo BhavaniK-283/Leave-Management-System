@@ -3,6 +3,7 @@ package com.example.LeaveManagementSystem.persistence.service.serviceImpl;
 import com.example.LeaveManagementSystem.persistence.constants.ResponseConstant;
 import com.example.LeaveManagementSystem.persistence.dto.ApiResponseDto;
 import com.example.LeaveManagementSystem.persistence.dto.LeaveRequestDto;
+import com.example.LeaveManagementSystem.persistence.dto.LeaveResponseDto;
 import com.example.LeaveManagementSystem.persistence.entity.*;
 import com.example.LeaveManagementSystem.persistence.enumeration.EnumLeaveStatus;
 import com.example.LeaveManagementSystem.persistence.enumeration.EnumRoleType;
@@ -19,8 +20,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.List;
-import java.util.stream.Collectors;
 
 
 @Service
@@ -44,19 +45,24 @@ public class LeaveTransactionServiceImpl implements LeaveTransactionService {
         // Validate Tenant
         TenantEntity tenantEntity = leaveTransactionValidation.validateTenant(tenantId);
 
+        leaveTransactionValidation.validateAndParseDate(leaveRequestDto.getStartDate());
+        leaveTransactionValidation.validateAndParseDate(leaveRequestDto.getEndDate());
+
+        LocalDate startDate= LocalDate.parse(leaveRequestDto.getStartDate());
+        LocalDate endDate = LocalDate.parse(leaveRequestDto.getEndDate());
+
         UserEntity requestUser = leaveTransactionValidation.validateUser(userId, tenantEntity.getId());
 
         UserEntity userLeave = leaveTransactionValidation.validateUser(String.valueOf(leaveRequestDto.getUserId()), tenantEntity.getId());
 
         LeaveTypeEntity leaveTypeEntity = leaveTransactionValidation.validateLeaveType(String.valueOf(leaveRequestDto.getLeaveTypeId()));
 
-        leaveTransactionValidation.validateLeaveDates(leaveRequestDto.getStartDate(), leaveRequestDto.getEndDate());
+        leaveTransactionValidation.validateLeaveDates(startDate, endDate);
 
-        leaveTransactionValidation.checkDuplicateLeaveRequest(userLeave, leaveRequestDto);
+        leaveTransactionValidation.checkDuplicateLeaveRequest(userLeave, leaveRequestDto,startDate,endDate);
 
-        LeaveTransactionEntity leaveTransaction = leaveTransactionMapper.leaveRequestDtoToLeaveTransactionEntity(leaveRequestDto, tenantEntity, requestUser, userLeave, leaveTypeEntity);
+        LeaveTransactionEntity leaveTransaction = leaveTransactionMapper.leaveRequestDtoToLeaveTransactionEntity(leaveRequestDto, tenantEntity, requestUser, userLeave, leaveTypeEntity,startDate,endDate);
         leaveTransactionRepository.save(leaveTransaction);
-
 
         List<ApproveWorkflowEntity> approveWorkflowEntities = leaveTransactionMapper.leaveRequestDtoToApproveWorkflowEntities(leaveTransaction, tenantEntity, requestUser, userLeave);
         approveWorkflowRepository.saveAll(approveWorkflowEntities);
@@ -69,7 +75,7 @@ public class LeaveTransactionServiceImpl implements LeaveTransactionService {
     }
 
     @Override
-    @Transactional
+
     public ApiResponseDto updateLeaveRequest(Long leaveId, LeaveRequestDto leaveRequestDto, String userId, String tenantId) {
         LeaveTransactionEntity userLeave = leaveTransactionRepository.findById(leaveId)
                 .orElseThrow(() -> new RuntimeException("Leave request not found"));
@@ -80,15 +86,17 @@ public class LeaveTransactionServiceImpl implements LeaveTransactionService {
         }
 
 
-        TenantEntity tenantEntity = tenantRepository.findByIdAndStatus(Long.valueOf(tenantId), EnumStatus.ACTIVE).orElseThrow(
-                () -> new RuntimeException("Tenant not found"));
+        TenantEntity tenantEntity = leaveTransactionValidation.validateTenant(tenantId);
 
         UserEntity requestUser = userRepository.findByIdAndStatusAndTenantId(
                         Long.valueOf(userId), EnumStatus.ACTIVE, tenantEntity.getId())
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
+        LocalDate startDate= LocalDate.parse(leaveRequestDto.getStartDate());
+        LocalDate endDate = LocalDate.parse(leaveRequestDto.getEndDate());
 
-        LeaveTransactionEntity leaveTransactionUpdate = LeaveTransactionMapper.leaveUpadteDtoToLeaveTransactionEntity(leaveRequestDto, tenantEntity, requestUser, userLeave);
+
+        LeaveTransactionEntity leaveTransactionUpdate = leaveTransactionMapper.leaveUpadteDtoToLeaveTransactionEntity(leaveRequestDto, requestUser, userLeave,startDate,endDate);
 //        ApproveWorkflowEntity approveWorkflowUpdate=LeaveTransactionMapper.leaveUpadteDtoToApproveWoekflowEntity(leaveRequestDto, tenantEntity, requestUser,userLeave);
         leaveTransactionRepository.save(leaveTransactionUpdate);
 
@@ -98,29 +106,42 @@ public class LeaveTransactionServiceImpl implements LeaveTransactionService {
     }
 
     @Override
-    public List<LeaveRequestDto> getUserLeaveTransactions(Long requestedUserId, Long requesterId) {
-        // Fetch the requester details
-        UserEntity requester = userRepository.findByIdAndStatus(requesterId, EnumStatus.ACTIVE)
-                .orElseThrow(() -> new RuntimeException("Requester not found"));
 
-        // If requester is ADMIN, allow access to any user's leave transactions
-        if (requester.getRole().getName() == EnumRoleType.ADMIN) {
-            List<LeaveTransactionEntity> transactions = leaveTransactionRepository.findByUserIdAndStatus(requestedUserId, EnumStatus.ACTIVE);
-            return transactions.stream()
-                    .map(LeaveTransactionMapper::leaveTransactionEntityToDto)
-                    .collect(Collectors.toList());
-        } else if (requester.getRole().getName() == EnumRoleType.USER) { // If requester is a USER, allow only self-access
-            if (!requesterId.equals(requestedUserId)) {
-                throw new RuntimeException("Access denied! Users can only view their own leave transactions.");
+    public List<LeaveResponseDto> getUserLeaveTransactions(Long userId, Long approverId) {
+        List<LeaveTransactionEntity> transactions;
+
+        if (userId != null) {
+            // Fetch the user details
+            UserEntity user = userRepository.findByIdAndStatus(userId, EnumStatus.ACTIVE)
+                    .orElseThrow(() -> new UserNotFoundException("User not found"));
+
+            // Fetch leave requests that the user applied for
+            transactions = leaveTransactionRepository.findByUserIdAndStatus(userId, EnumStatus.ACTIVE);
+
+        } else if (approverId != null) {
+            // Fetch the approver details
+            UserEntity approver = userRepository.findByIdAndStatus(approverId, EnumStatus.ACTIVE)
+                    .orElseThrow(() -> new UserNotFoundException("Approver not found"));
+
+            EnumRoleType role = approver.getRole().getName();
+
+            if (role == EnumRoleType.ADMIN) {
+                // Admin can see all leave requests under their tenant
+                transactions = leaveTransactionRepository.findByTenantIdAndStatus(approver.getTenant().getId(), EnumStatus.ACTIVE);
+            } else if (role == EnumRoleType.MANAGER) {
+                // Manager can see leave requests under their team
+                transactions = leaveTransactionRepository.findByApproverIdAndStatus(approverId, EnumStatus.ACTIVE);
+            } else {
+                throw new RuntimeException("Unauthorized access. Only Admins and Managers can view approvals.");
             }
-            List<LeaveTransactionEntity> transactions = leaveTransactionRepository.findByUserIdAndStatus(requesterId, EnumStatus.ACTIVE);
-            return transactions.stream()
-                    .map(LeaveTransactionMapper::leaveTransactionEntityToDto)
-                    .collect(Collectors.toList());
-        } else {
 
-            throw new RuntimeException("Unauthorized access.");
+        } else {
+            throw new IllegalArgumentException("Either userId or approverId must be provided in the header.");
         }
+
+        return transactions.stream()
+                .map(leaveTransactionMapper::leaveTransactionEntityToResponseDto)
+                .toList();
     }
 
 

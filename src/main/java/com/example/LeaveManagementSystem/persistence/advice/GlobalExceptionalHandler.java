@@ -1,10 +1,8 @@
 package com.example.LeaveManagementSystem.persistence.advice;
 
 import com.example.LeaveManagementSystem.persistence.dto.ApiResponseDto;
-import com.example.LeaveManagementSystem.persistence.exception.CustomException;
-import com.example.LeaveManagementSystem.persistence.exception.LeaveTypeNotFoundException;
-import com.example.LeaveManagementSystem.persistence.exception.TenantNotFoundException;
-import com.example.LeaveManagementSystem.persistence.exception.UserNotFoundException;
+import com.example.LeaveManagementSystem.persistence.exception.*;
+import com.example.LeaveManagementSystem.persistence.exception.DatePatternMismatchException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ControllerAdvice;
@@ -29,22 +27,32 @@ public class GlobalExceptionalHandler {
         return buildResponseEntity(HttpStatus.NOT_FOUND, ex.getMessage());
     }
     @ExceptionHandler(TenantNotFoundException.class)
-    public ResponseEntity<Object> handleTenantNotFoundException(UserNotFoundException ex) {
+    public ResponseEntity<Object> handleTenantNotFoundException(TenantNotFoundException ex) {
         return buildResponseEntity(HttpStatus.NOT_FOUND, ex.getMessage());
     }
     @ExceptionHandler(LeaveTypeNotFoundException.class)
-    public ResponseEntity<Object> handleLeaveTypeNotFoundException(UserNotFoundException ex) {
+    public ResponseEntity<Object> handleLeaveTypeNotFoundException(LeaveTypeNotFoundException ex) {
         return buildResponseEntity(HttpStatus.NOT_FOUND, ex.getMessage());
     }
+    @ExceptionHandler(DuplicateLeaveRequestException.class)
+    public ResponseEntity<Object> handleDuplicateLeaveRequestException(DuplicateLeaveRequestException ex) {
+        return buildResponseEntity(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+    @ExceptionHandler(InvalidLeaveDateException.class)
+    public ResponseEntity<Object> handleInvalidLeaveDateException(InvalidLeaveDateException ex) {
+        return buildResponseEntity(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+    @ExceptionHandler(DatePatternMismatchException.class)
+    public ResponseEntity<Object> handleDatePatternMismatchException(DatePatternMismatchException ex) {
+        return buildResponseEntity(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
 
-    // Handle CustomException
     @ExceptionHandler(CustomException.class)
     public ResponseEntity<ApiResponseDto> handleCustomException(CustomException ex) {
         ApiResponseDto errorResponse = new ApiResponseDto(ex.getStatus().value(), ex.getMessage());
         return new ResponseEntity<>(errorResponse, ex.getStatus());
     }
 
-    // Handle generic exceptions
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponseDto> handleGenericException(Exception ex) {
         ApiResponseDto errorResponse = new ApiResponseDto(
@@ -54,7 +62,6 @@ public class GlobalExceptionalHandler {
         return new ResponseEntity<>(errorResponse, HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    // Handle MethodArgumentTypeMismatchException
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ApiResponseDto> handleTypeMismatchException(MethodArgumentTypeMismatchException ex) {
         String errorMessage = "Invalid parameter: " + ex.getName();
